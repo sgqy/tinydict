@@ -49,6 +49,9 @@ pub(crate) fn run(directory: &Path, lookup: Option<&str>) -> anyhow::Result<()> 
                             sense.source,
                             sense.definition
                         );
+                        for example in &sense.examples {
+                            println!("  Example: {example}");
+                        }
                     }
                 }
             } else {

@@ -520,6 +520,19 @@ fn render_book(
                 if !entry.labels.is_empty() {
                     ui.small(entry.labels.join(" · "));
                 }
+                if matches!(
+                    book.dictionary.info().id.as_str(),
+                    "wiktionary" | "simple-wiktionary"
+                ) {
+                    let word = percent_encoding::utf8_percent_encode(
+                        &entry.word,
+                        percent_encoding::NON_ALPHANUMERIC,
+                    );
+                    ui.hyperlink_to(
+                        "Original entry & contributors",
+                        format!("{}/wiki/{word}", book.dictionary.info().source_url),
+                    );
+                }
                 for sense in &entry.senses {
                     if shown >= *limit {
                         break;
@@ -539,9 +552,7 @@ fn render_book(
                         }
                     });
                     ui.add(egui::Label::new(&sense.definition).selectable(true).wrap());
-                    for example in &sense.examples {
-                        ui.label(RichText::new(example).italics().weak());
-                    }
+                    render_examples(ui, &book.dictionary.info().id, &entry.id, sense);
                     if !sense.synonyms.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.small("Synonyms:");
@@ -563,4 +574,30 @@ fn render_book(
                 *limit += SENSE_PAGE;
             }
         });
+}
+
+fn render_examples(ui: &mut egui::Ui, book: &str, entry: &str, sense: &tinydict_core::Sense) {
+    const PAGE: usize = 3;
+    let id = egui::Id::unique(("examples", book, entry, &sense.id));
+    let limit = ui.data(|data| data.get_temp::<usize>(id)).unwrap_or(PAGE);
+    for example in sense.examples.iter().take(limit) {
+        ui.add(
+            egui::Label::new(RichText::new(example).italics().weak())
+                .selectable(true)
+                .wrap(),
+        );
+    }
+    if sense.examples.len() > limit
+        && ui
+            .push_id(id, |ui| {
+                ui.small_button(format!(
+                    "Show more examples ({limit} / {})",
+                    sense.examples.len()
+                ))
+                .clicked()
+            })
+            .inner
+    {
+        ui.data_mut(|data| data.insert_temp(id, limit + PAGE));
+    }
 }

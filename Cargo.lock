@@ -2801,6 +2801,7 @@ dependencies = [
  "eframe",
  "env_logger",
  "log",
+ "percent-encoding",
  "serde",
  "serde_json",
  "sysinfo",
