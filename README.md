@@ -84,3 +84,18 @@ cargo doc --workspace --no-deps
 2026-11-17 在当前 Windows 开发机上的一次 release 实测：两本词典加载用时 1.345 s，联合精确查询 p95 为 0.002 ms，前缀查询 p95 为 0.016 ms（每本最多 50 个候选）。这些是当前数据快照与测试进程的结果，不代表其他机器或冷启动性能。
 
 实际窗口已验证两本词典独立展示、停用其中一本和同义词跳转。4 GB 环境下的系统换页及端到端输入延迟尚未实测。
+
+## 窗口帧耗时诊断
+
+使用 release 程序对比渲染后端：
+
+```powershell
+./dist/tinydict.exe --renderer glow --profile data/profiles/glow.json --profile-motion --profile-seconds 15
+./dist/tinydict.exe --renderer wgpu --profile data/profiles/wgpu.json --profile-motion --profile-seconds 15
+```
+
+两条命令应依次运行。保持测试窗口在前台；默认测空白首页，添加 `--query computer` 可测查询结果页。`wgpu` 在 Windows 上使用 Direct3D 12；`glow` 使用 OpenGL。添加 `--no-vsync` 可比较关闭垂直同步后的结果。
+
+诊断等待词典加载和查询完成，预热 1 s 后采样，结束时自动关闭窗口。JSON 分别记录界面构建时间、eframe 帧 CPU 时间和帧间隔，并单独汇总连续两帧均有焦点的样本。eframe 的 CPU 计时扣除了其识别的呈现等待；帧间隔还包含事件循环、调度和呈现等待。同名 `.log` 文件记录实际显卡与后端。
+
+`--profile-motion` 向 egui 注入可重复的指针位置，诊断模式持续重绘。它用于检查悬停和渲染开销，不模拟操作系统的高回报率鼠标队列，也不测量实际鼠标到屏幕的延迟。测试配置写入旁边的 `.state.ron`，与日常配置隔离。正常启动不采样，也不持续重绘。

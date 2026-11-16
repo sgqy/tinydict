@@ -46,12 +46,19 @@ pub(crate) struct TinyDict {
     visible_senses: HashMap<String, usize>,
     show_licenses: bool,
     load_seconds: f64,
+    probe: Option<crate::profile::FrameProbe>,
 }
 
 impl TinyDict {
-    pub fn new(creation: &eframe::CreationContext<'_>, directory: PathBuf, query: String) -> Self {
+    pub fn new(
+        creation: &eframe::CreationContext<'_>,
+        directory: PathBuf,
+        query: String,
+        probe: Option<crate::profile::FrameProbe>,
+    ) -> Self {
         let preferences: Preferences = creation
             .storage
+            .filter(|_| probe.is_none())
             .and_then(|storage| eframe::get_value(storage, "preferences"))
             .unwrap_or_default();
         let ctx = &creation.egui_ctx;
@@ -88,6 +95,7 @@ impl TinyDict {
             visible_senses: HashMap::new(),
             show_licenses: false,
             load_seconds: 0.0,
+            probe,
         }
     }
 
@@ -410,14 +418,35 @@ impl TinyDict {
 }
 
 impl eframe::App for TinyDict {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.receive();
+        if let Some(probe) = &mut self.probe {
+            probe.frame(
+                ctx,
+                frame.info().cpu_usage,
+                self.loading.is_none() && !self.searching,
+            );
+        }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let started = self.probe.as_ref().map(|_| std::time::Instant::now());
         self.content(ui);
+        if let (Some(probe), Some(started)) = (&mut self.probe, started) {
+            probe.record_ui(started.elapsed());
+        }
+    }
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+        if let Some(probe) = &mut self.probe {
+            probe.input(input);
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "preferences", &self.preferences);
+        if self.probe.is_none() {
+            eframe::set_value(storage, "preferences", &self.preferences);
+        }
+    }
+    fn persist_egui_memory(&self) -> bool {
+        self.probe.is_none()
     }
 }
 
