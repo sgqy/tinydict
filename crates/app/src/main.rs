@@ -12,6 +12,19 @@ use std::path::PathBuf;
 enum Renderer {
     Glow,
     Wgpu,
+    Vulkan,
+}
+
+impl Default for Renderer {
+    fn default() -> Self {
+        // Vulkan avoided the intermittent OpenGL stalls in the Windows frame profiles.
+        // Keep the other backends selectable for hardware-specific comparisons.
+        if cfg!(target_os = "windows") {
+            Self::Vulkan
+        } else {
+            Self::Wgpu
+        }
+    }
 }
 
 #[derive(Parser)]
@@ -34,7 +47,8 @@ struct Args {
     /// Disable presentation synchronization for a diagnostic comparison.
     #[arg(long)]
     no_vsync: bool,
-    #[arg(long, value_enum, default_value_t = Renderer::Glow)]
+    /// Select a renderer; Windows defaults to Vulkan, other platforms to wgpu.
+    #[arg(long, value_enum, default_value_t = Renderer::default())]
     renderer: Renderer,
 }
 
@@ -61,16 +75,18 @@ fn main() -> anyhow::Result<()> {
     options.glow_options.vsync = !args.no_vsync;
     options.renderer = match args.renderer {
         Renderer::Glow => eframe::Renderer::Glow,
-        Renderer::Wgpu => eframe::Renderer::Wgpu,
+        Renderer::Wgpu | Renderer::Vulkan => eframe::Renderer::Wgpu,
     };
     options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
     if args.no_vsync {
         options.wgpu_options.surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
     }
-    if cfg!(target_os = "windows")
-        && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup
-    {
-        setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        if matches!(args.renderer, Renderer::Vulkan) {
+            setup.instance_descriptor.backends = eframe::wgpu::Backends::VULKAN;
+        } else if cfg!(target_os = "windows") {
+            setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+        }
     }
     eframe::run_native(
         "TinyDict",

@@ -66,7 +66,9 @@ Wordset 当前数据有 374 个空同义词项，导入时忽略；另有 5 条�
 
 加载时根据总内存、当前可用内存和预计展开体积判断是否接纳词典。4 GB 档位的数据预算上限为 768 MiB，96 GB 档位为 64 GiB；这不是预分配。还会为系统和加载过程预留内存。内存不足时明确报告该词典未加载，其他已加载词典仍可查询。
 
-本版尚未实现内存不足时的磁盘查询降级、运行中卸载、拼写纠错、全文检索或 CUDA。普通查词使用 CPU，界面使用 OpenGL 图形后端。跨平台代码已保留，本次交付验证范围为 Windows。
+本版尚未实现内存不足时的磁盘查询降级、运行中卸载、拼写纠错、全文检索或 CUDA。普通查词使用 CPU。Windows 界面默认使用 wgpu 的 Vulkan 后端，开启垂直同步，目标排队上限设为 1 帧。跨平台代码已保留，本次交付验证范围为 Windows。
+
+重绘诊断在当前机器的 OpenGL 路径中捕获了间歇长帧，Windows 默认后端因此改为 Vulkan。可用 `--renderer glow` 切回 OpenGL；`--renderer wgpu` 在 Windows 上使用 Direct3D 12。其他系统默认使用 wgpu 的平台后端。测量过程和局限见 [窗口性能诊断](docs/frame-performance.md)。
 
 ## 验证
 
@@ -91,10 +93,12 @@ cargo doc --workspace --no-deps
 
 ```powershell
 ./dist/tinydict.exe --renderer glow --profile data/profiles/glow.json --profile-motion --profile-seconds 15
-./dist/tinydict.exe --renderer wgpu --profile data/profiles/wgpu.json --profile-motion --profile-seconds 15
+./dist/tinydict.exe --renderer vulkan --profile data/profiles/vulkan.json --profile-motion --profile-seconds 15
 ```
 
-两条命令应依次运行。保持测试窗口在前台；默认测空白首页，添加 `--query computer` 可测查询结果页。`wgpu` 在 Windows 上使用 Direct3D 12；`glow` 使用 OpenGL。添加 `--no-vsync` 可比较关闭垂直同步后的结果。
+两条命令应依次运行。保持测试窗口在前台；默认测空白首页，添加 `--query computer` 可测查询结果页。添加 `--no-vsync` 可比较关闭垂直同步后的结果。
+
+测试窗口需要实际可见。使用 PowerShell 自动启动时，应使用 `Start-Process -WindowStyle Normal`，并确认窗口未被遮挡。隐藏启动的测试曾出现异常限帧，即使报告中的焦点标记为真，也不能据此认定窗口在前台。
 
 诊断等待词典加载和查询完成，预热 1 s 后采样，结束时自动关闭窗口。JSON 分别记录界面构建时间、eframe 帧 CPU 时间和帧间隔，并单独汇总连续两帧均有焦点的样本。eframe 的 CPU 计时扣除了其识别的呈现等待；帧间隔还包含事件循环、调度和呈现等待。同名 `.log` 文件记录实际显卡与后端。
 
