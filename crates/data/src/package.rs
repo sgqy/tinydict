@@ -1,7 +1,8 @@
-use crate::ImportReport;
+use crate::{ImportReport, compressed};
 use rusqlite::{Connection, OpenFlags, params};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
+use std::io::Read;
 use std::path::Path;
 use tinydict_core::{Dictionary, DictionaryInfo, Entry};
 
@@ -44,7 +45,7 @@ pub enum PackageError {
     Invalid(String),
 }
 
-/// Publish a new package atomically without overwriting an existing installation.
+/// Publish a package without overwriting: `.tdict.zst` selects zstd, otherwise SQLite.
 ///
 /// # Errors
 /// Fails for existing destinations, failed writes, or serialization errors.
@@ -59,26 +60,37 @@ pub fn write_package(
             path.display()
         )));
     }
-    if let Some(parent) = path
+    let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)?;
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    if path.to_string_lossy().ends_with(".tdict.zst") {
+        compressed::write(temporary.as_file_mut(), dictionary, report)?;
+    } else {
+        write_database(temporary.path(), dictionary, report)?;
     }
-    let temporary = path.with_extension("tdict.partial");
-    File::options()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)?;
-    if let Err(error) = write_database(&temporary, dictionary, report) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    // Hard-link publication is atomic and refuses to replace an existing destination.
-    let result = fs::hard_link(&temporary, path);
-    let _ = fs::remove_file(&temporary);
-    result?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist_noclobber(path)
+        .map_err(|error| error.error)?;
     Ok(())
+}
+
+pub(crate) fn make_manifest(
+    dictionary: &Dictionary,
+    report: ImportReport,
+    schema_version: u32,
+) -> PackageManifest {
+    PackageManifest {
+        schema_version,
+        dictionary: dictionary.info().clone(),
+        entry_count: dictionary.entry_count(),
+        sense_count: dictionary.sense_count(),
+        estimated_bytes: dictionary.estimated_bytes() as u64,
+        import: report,
+    }
 }
 
 fn write_database(
@@ -88,14 +100,7 @@ fn write_database(
 ) -> Result<(), PackageError> {
     let mut connection = Connection::open(path)?;
     connection.execute_batch("PRAGMA journal_mode=DELETE; CREATE TABLE metadata (id INTEGER PRIMARY KEY CHECK(id=1), json TEXT NOT NULL); CREATE TABLE entries (id INTEGER PRIMARY KEY, json TEXT NOT NULL);")?;
-    let metadata = PackageManifest {
-        schema_version: SCHEMA_VERSION,
-        dictionary: dictionary.info().clone(),
-        entry_count: dictionary.entry_count(),
-        sense_count: dictionary.sense_count(),
-        estimated_bytes: dictionary.estimated_bytes() as u64,
-        import: report,
-    };
+    let metadata = make_manifest(dictionary, report, SCHEMA_VERSION);
     let transaction = connection.transaction()?;
     transaction.execute(
         "INSERT INTO metadata VALUES (1, ?1)",
@@ -136,14 +141,27 @@ fn manifest(connection: &Connection) -> Result<PackageManifest, PackageError> {
 /// # Errors
 /// Fails for missing, malformed or unsupported packages.
 pub fn inspect_package(path: &Path) -> Result<PackageManifest, PackageError> {
-    manifest(&open_readonly(path)?)
+    if is_zstd(path)? {
+        compressed::inspect(path)
+    } else {
+        manifest(&open_readonly(path)?)
+    }
 }
 
-/// Load all entries and the index; the database connection closes before returning.
+fn is_zstd(path: &Path) -> Result<bool, PackageError> {
+    let mut magic = [0; 4];
+    File::open(path)?.read_exact(&mut magic)?;
+    Ok(magic == [0x28, 0xb5, 0x2f, 0xfd])
+}
+
+/// Load entries and index entirely in memory, closing all files before returning.
 ///
 /// # Errors
 /// Fails for unreadable packages, invalid entries or mismatched metadata counts.
 pub fn load_package(path: &Path) -> Result<Dictionary, PackageError> {
+    if is_zstd(path)? {
+        return compressed::load(path);
+    }
     let connection = open_readonly(path)?;
     let metadata = manifest(&connection)?;
     let mut statement = connection.prepare("SELECT json FROM entries ORDER BY id")?;
@@ -156,6 +174,13 @@ pub fn load_package(path: &Path) -> Result<Dictionary, PackageError> {
             .map_err(|error| PackageError::Invalid(error.to_string()))?;
         entries.push(serde_json::from_str::<Entry>(json)?);
     }
+    build_dictionary(metadata, entries)
+}
+
+pub(crate) fn build_dictionary(
+    metadata: PackageManifest,
+    entries: Vec<Entry>,
+) -> Result<Dictionary, PackageError> {
     let dictionary = Dictionary::build(metadata.dictionary, entries)?;
     if dictionary.entry_count() != metadata.entry_count
         || dictionary.sense_count() != metadata.sense_count

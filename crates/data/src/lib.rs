@@ -1,4 +1,5 @@
-//! Source adapters and SQLite packages that load into fully resident dictionaries.
+//! Source adapters and zstd/SQLite packages that load into fully resident dictionaries.
+mod compressed;
 mod import;
 mod package;
 mod wiktionary;
