@@ -324,27 +324,31 @@ impl TinyDict {
                         "{} suggestions · up to 50 per dictionary",
                         self.suggestions.len()
                     ));
-                    egui::ScrollArea::vertical()
-                        .id_salt("suggestions")
-                        .show_rows(ui, 44.0, self.suggestions.len(), |ui, rows| {
-                            for index in rows {
-                                let suggestion = &self.suggestions[index];
-                                let response = ui.add_sized(
-                                    [ui.available_width(), 44.0],
-                                    egui::Button::new(format!(
-                                        "{}\n{}",
-                                        suggestion.word, suggestion.book
-                                    ))
-                                    .selected(self.selected == Some(index)),
-                                );
-                                if self.scroll_selection && self.selected == Some(index) {
-                                    response.scroll_to_me(Some(egui::Align::Center));
-                                }
-                                if response.clicked() {
-                                    choose = Some(suggestion.word.clone());
-                                }
+                    let mut scroll = egui::ScrollArea::vertical().id_salt("suggestions");
+                    if self.scroll_selection
+                        && let Some(index) = self.selected
+                    {
+                        // Offscreen rows are never rendered, so scroll before virtualization.
+                        scroll = scroll.vertical_scroll_offset(
+                            index as f32 * (44.0 + ui.spacing().item_spacing.y),
+                        );
+                    }
+                    scroll.show_rows(ui, 44.0, self.suggestions.len(), |ui, rows| {
+                        for index in rows {
+                            let suggestion = &self.suggestions[index];
+                            let response = ui.add_sized(
+                                [ui.available_width(), 44.0],
+                                egui::Button::new(format!(
+                                    "{}\n{}",
+                                    suggestion.word, suggestion.book
+                                ))
+                                .selected(self.selected == Some(index)),
+                            );
+                            if response.clicked() {
+                                choose = Some(suggestion.word.clone());
                             }
-                        });
+                        }
+                    });
                     self.scroll_selection = false;
                 }
             });

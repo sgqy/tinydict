@@ -1,5 +1,7 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 mod app;
-mod cli;
+mod paths;
 mod worker;
 
 use clap::Parser;
@@ -14,20 +16,11 @@ struct Args {
     data_dir: Option<PathBuf>,
     #[arg(long, default_value = "")]
     query: String,
-    /// Print an exact lookup without opening a window.
-    #[arg(long)]
-    lookup: Option<String>,
-    /// Measure full-memory lookups and prefix queries without opening a window.
-    #[arg(long)]
-    benchmark: bool,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let directory = args.data_dir.unwrap_or_else(default_directory);
-    if args.benchmark || args.lookup.is_some() {
-        return cli::run(&directory, args.lookup.as_deref());
-    }
+    let directory = args.data_dir.unwrap_or_else(paths::default_directory);
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1240.0, 820.0])
@@ -44,16 +37,4 @@ fn main() -> anyhow::Result<()> {
         }),
     )
     .map_err(|error| anyhow::anyhow!("cannot start desktop window: {error}"))
-}
-
-fn default_directory() -> PathBuf {
-    if let Ok(executable) = std::env::current_exe()
-        && let Some(parent) = executable.parent()
-    {
-        let beside_executable = parent.join("data/dictionaries");
-        if beside_executable.is_dir() {
-            return beside_executable;
-        }
-    }
-    PathBuf::from("data/dictionaries")
 }

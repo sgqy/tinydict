@@ -1,18 +1,9 @@
 use eframe::egui;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tinydict_core::{Dictionary, ResourceBudget};
-
-pub(crate) fn packages(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut paths = std::fs::read_dir(directory)?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    paths.retain(|path| path.extension().is_some_and(|ext| ext == "tdict"));
-    paths.sort();
-    Ok(paths)
-}
 
 pub(crate) enum LoadEvent {
     Started(String),
@@ -29,7 +20,7 @@ pub(crate) fn start_loader(directory: PathBuf, ctx: egui::Context) -> mpsc::Rece
             ctx.request_repaint();
             alive
         };
-        let paths = match packages(&directory) {
+        let paths = match crate::paths::packages(&directory) {
             Ok(paths) => paths,
             Err(error) => {
                 send(LoadEvent::Failed(format!(

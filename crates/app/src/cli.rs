@@ -5,7 +5,7 @@ use std::time::Instant;
 
 pub(crate) fn run(directory: &Path, lookup: Option<&str>) -> anyhow::Result<()> {
     let started = Instant::now();
-    let dictionaries = crate::worker::packages(directory)?
+    let dictionaries = crate::paths::packages(directory)?
         .iter()
         .map(|path| {
             tinydict_data::load_package(path).with_context(|| format!("loading {}", path.display()))
@@ -28,11 +28,12 @@ pub(crate) fn run(directory: &Path, lookup: Option<&str>) -> anyhow::Result<()> 
     );
     for dictionary in &dictionaries {
         println!(
-            "{}: {} headwords, {} entries, {} senses",
+            "{}: {} headwords, {} entries, {} senses, {:.1} MiB estimated resident",
             dictionary.info().name,
             dictionary.groups().len(),
             dictionary.entry_count(),
-            dictionary.sense_count()
+            dictionary.sense_count(),
+            dictionary.estimated_bytes() as f64 / 1048576.0
         );
     }
     if let Some(query) = lookup {

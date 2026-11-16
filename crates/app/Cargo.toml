@@ -1,5 +1,6 @@
 [package]
 name = "tinydict"
+default-run = "tinydict"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
