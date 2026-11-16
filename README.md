@@ -61,6 +61,12 @@ Wiktionary 导入只接受 `lang_code=en` 的词条。Simple English 快照跳�
 
 两本 Wiktionary 使用 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)。包内保存许可正文、Wiktionary 贡献者署名、Kaikki 提取来源和转换说明；引文另保留上游提供的出处。
 
+## 许可证
+
+本项目原创代码和文档采用 [MIT 许可证](LICENSE)。第三方依赖、词典数据及其衍生词典包遵循各自的许可证，项目的 MIT 许可证不替代这些条款。
+
+Git 仓库包含源码、脚本和文档。下载数据、生成的词典包和构建产物保留在本机；运行 `scripts/setup.ps1` 可下载数据并构建程序。
+
 ## 结构和性能
 
 | 模块 | 职责 |
