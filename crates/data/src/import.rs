@@ -16,10 +16,15 @@ pub enum Source {
     Cloudbytes,
     /// Wordset's per-letter JSON directory or a single JSON file.
     Wordset,
+    /// Kaikki's English-language Wiktionary JSONL, optionally gzip compressed.
+    Wiktionary,
+    /// Kaikki's Simple English Wiktionary JSONL, optionally gzip compressed.
+    SimpleWiktionary,
 }
 
 /// Input checksums and accounting for an import.
 #[derive(Clone, Debug, Default, Deserialize, serde::Serialize)]
+#[serde(default)]
 pub struct ImportReport {
     /// Original entries before validation.
     pub input_entries: usize,
@@ -29,6 +34,21 @@ pub struct ImportReport {
     pub skipped_senses: usize,
     /// Source filenames and SHA-256 hashes in deterministic order.
     pub input_sha256: Vec<(String, String)>,
+    /// Non-English lexical entries deliberately excluded from an English dictionary.
+    pub filtered_non_english_entries: usize,
+    /// Upstream redirect rows, which have no definitions of their own.
+    pub skipped_redirects: usize,
+    /// Nonempty examples and quotations retained in accepted senses.
+    pub example_count: usize,
+    /// Accepted senses with at least one example or quotation.
+    pub senses_with_examples: usize,
+}
+
+#[derive(Default)]
+pub(crate) struct ParsedEntries {
+    pub entries: Vec<Entry>,
+    pub non_english: usize,
+    pub redirects: usize,
 }
 
 /// Import files with bounded parallelism and preserve original entry and sense order.
@@ -65,10 +85,18 @@ pub fn import_source(
         files
             .par_iter()
             .map(|path| {
-                let entries = match source {
-                    Source::Cloudbytes => cloudbytes(path),
-                    Source::Wordset => wordset(path),
-                }?;
+                let parsed = match source {
+                    Source::Cloudbytes => ParsedEntries {
+                        entries: cloudbytes(path)?,
+                        ..Default::default()
+                    },
+                    Source::Wordset => ParsedEntries {
+                        entries: wordset(path)?,
+                        ..Default::default()
+                    },
+                    Source::Wiktionary => crate::wiktionary::read(path, "enwiktionary")?,
+                    Source::SimpleWiktionary => crate::wiktionary::read(path, "simplewiktionary")?,
+                };
                 let mut file = File::open(path)?;
                 let mut hash = Sha256::new();
                 let mut buffer = [0_u8; 64 * 1024];
@@ -80,7 +108,7 @@ pub fn import_source(
                     hash.update(&buffer[..count]);
                 }
                 Ok((
-                    entries,
+                    parsed,
                     (
                         path.file_name()
                             .unwrap_or_default()
@@ -96,7 +124,10 @@ pub fn import_source(
     let mut entries = Vec::new();
     for (part, digest) in parts {
         report.input_sha256.push(digest);
-        for mut entry in part {
+        report.input_entries += part.non_english + part.redirects;
+        report.filtered_non_english_entries += part.non_english;
+        report.skipped_redirects += part.redirects;
+        for mut entry in part.entries {
             report.input_entries += 1;
             let count = entry.senses.len();
             entry
@@ -106,6 +137,10 @@ pub fn import_source(
             if entry.word.trim().is_empty() || entry.senses.is_empty() {
                 report.skipped_entries += 1;
             } else {
+                for sense in &entry.senses {
+                    report.example_count += sense.examples.len();
+                    report.senses_with_examples += usize::from(!sense.examples.is_empty());
+                }
                 entries.push(entry);
             }
         }
@@ -118,7 +153,7 @@ pub fn import_source(
     Ok((Dictionary::build(info, entries)?, report))
 }
 
-fn reader(path: &Path) -> Result<Box<dyn BufRead>, PackageError> {
+pub(crate) fn reader(path: &Path) -> Result<Box<dyn BufRead>, PackageError> {
     let file = File::open(path)?;
     if path.extension().is_some_and(|ext| ext == "gz") {
         Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))))

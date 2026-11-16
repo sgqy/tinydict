@@ -34,6 +34,16 @@ fn main() -> anyhow::Result<()> {
             "Wordset Dictionary",
             "https://github.com/wordset/wordset-dictionary",
         ),
+        Source::Wiktionary => (
+            "wiktionary",
+            "English Wiktionary",
+            "https://en.wiktionary.org",
+        ),
+        Source::SimpleWiktionary => (
+            "simple-wiktionary",
+            "Simple English Wiktionary",
+            "https://simple.wiktionary.org",
+        ),
     };
     let license = std::fs::read_to_string(&args.license).context("reading source data license")?;
     anyhow::ensure!(!license.trim().is_empty(), "source data license is empty");
@@ -63,6 +73,13 @@ fn main() -> anyhow::Result<()> {
         dictionary.estimated_bytes() as f64 / 1048576.0,
         report.skipped_entries,
         report.skipped_senses
+    );
+    println!(
+        "{} examples / quotations in {} senses; filtered {} non-English entries and {} redirects",
+        report.example_count,
+        report.senses_with_examples,
+        report.filtered_non_english_entries,
+        report.skipped_redirects
     );
     write_package(&args.output, &dictionary, report).context("writing package")?;
     println!(
