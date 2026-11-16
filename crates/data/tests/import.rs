@@ -37,6 +37,11 @@ fn cloudbytes_gzip_preserves_subsources_and_queries_survive_package_removal() {
     let metadata = inspect_package(&package).unwrap();
     assert_eq!(metadata.dictionary.revision, "test-revision");
     let loaded = load_package(&package).unwrap();
+    assert_eq!(
+        loaded.estimated_bytes(),
+        dictionary.estimated_bytes(),
+        "package loading should not inflate retained vector capacities"
+    );
     fs::remove_file(package).unwrap();
     fs::remove_file(input).unwrap();
     let group = &loaded.groups()[loaded.exact("WIDGET").unwrap()];

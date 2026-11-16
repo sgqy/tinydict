@@ -47,7 +47,7 @@ impl Dictionary {
     /// Returns an error for empty entries or a failed index build.
     pub fn build(info: DictionaryInfo, entries: Vec<Entry>) -> Result<Self, BuildError> {
         let mut keyed = Vec::with_capacity(entries.len());
-        for entry in entries {
+        for mut entry in entries {
             let key = normalize(&entry.word);
             if key.is_empty()
                 || entry.senses.is_empty()
@@ -58,6 +58,7 @@ impl Dictionary {
             {
                 return Err(BuildError::InvalidEntry(entry.id));
             }
+            compact_entry(&mut entry);
             keyed.push((key, entry));
         }
         // Stable sorting retains upstream order for case-folding collisions.
@@ -74,6 +75,10 @@ impl Dictionary {
                 });
             }
         }
+        for group in &mut groups {
+            group.entries.shrink_to_fit();
+        }
+        groups.shrink_to_fit();
         let mut builder = fst::MapBuilder::memory();
         for (id, group) in groups.iter().enumerate() {
             builder.insert(&group.key, id as u64)?;
@@ -178,4 +183,39 @@ fn estimate_bytes(groups: &[WordGroup]) -> usize {
 
 fn strings_bytes(values: &Vec<String>) -> usize {
     values.capacity() * size_of::<String>() + values.iter().map(String::capacity).sum::<usize>()
+}
+
+// Deserializers grow Vec capacity geometrically. Hundreds of thousands of single-sense
+// entries otherwise retain room for four senses each after loading from a package.
+fn compact_entry(entry: &mut Entry) {
+    entry.id.shrink_to_fit();
+    entry.word.shrink_to_fit();
+    compact_strings(&mut entry.labels);
+    compact_strings(&mut entry.contributors);
+    for sense in &mut entry.senses {
+        sense.id.shrink_to_fit();
+        sense.definition.shrink_to_fit();
+        sense.source.shrink_to_fit();
+        compact_strings(&mut sense.examples);
+        compact_strings(&mut sense.synonyms);
+        compact_strings(&mut sense.labels);
+        for value in [
+            &mut sense.part_of_speech,
+            &mut sense.original_wordtype,
+            &mut sense.synset_id,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            value.shrink_to_fit();
+        }
+    }
+    entry.senses.shrink_to_fit();
+}
+
+fn compact_strings(values: &mut Vec<String>) {
+    for value in values.iter_mut() {
+        value.shrink_to_fit();
+    }
+    values.shrink_to_fit();
 }
