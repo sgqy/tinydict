@@ -1,0 +1,15 @@
+[package]
+name = "tinydict-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fst = "0.4"
+serde.workspace = true
+thiserror.workspace = true
+unicode-casefold = "0.2"
+unicode-normalization = "0.1"
+
+[lints]
+workspace = true
