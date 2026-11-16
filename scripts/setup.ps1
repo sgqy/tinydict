@@ -15,12 +15,19 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot locate Cargo output directory.' }
     $releaseDir = Join-Path $metadata.target_directory 'release'
     $importer = Join-Path $releaseDir 'tinydict-import.exe'
+    $packer = Join-Path $releaseDir 'tinydict-pack.exe'
     $sourceNames = @('cloudbytes', 'wordset', 'simple-wiktionary', 'wiktionary')
     foreach ($sourceName in $sourceNames) {
         $sourceDir = Join-Path $projectRoot "data/sources/$sourceName"
-        $pin = Get-Content -Raw (Join-Path $sourceDir 'source.json') | ConvertFrom-Json
-        $output = Join-Path $projectRoot "data/dictionaries/$sourceName.tdict"
+        $output = Join-Path $projectRoot "data/dictionaries/$sourceName.tdict.zst"
+        $legacy = Join-Path $projectRoot "data/dictionaries/$sourceName.tdict"
         if (-not (Test-Path -LiteralPath $output)) {
+            if (Test-Path -LiteralPath $legacy) {
+                & $packer --input $legacy --output $output --verify
+                if ($LASTEXITCODE -ne 0) { throw "Repack failed: $sourceName" }
+                continue
+            }
+            $pin = Get-Content -Raw (Join-Path $sourceDir 'source.json') | ConvertFrom-Json
             if ($sourceName -eq 'cloudbytes') {
                 $inputPath = Join-Path $sourceDir 'dictionary.jsonl.gz'
                 $licensePath = Join-Path $sourceDir 'LICENSE-DATA.md'
@@ -42,9 +49,10 @@ try {
     New-Item -ItemType Directory -Path $dictionaryDestination -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $releaseDir 'tinydict.exe') -Destination $destination
     Copy-Item -LiteralPath $importer -Destination $destination
+    Copy-Item -LiteralPath $packer -Destination $destination
     Copy-Item -LiteralPath (Join-Path $releaseDir 'tinydict-inspect.exe') -Destination $destination
     foreach ($sourceName in $sourceNames) {
-        Copy-Item -LiteralPath (Join-Path $projectRoot "data/dictionaries/$sourceName.tdict") -Destination $dictionaryDestination
+        Copy-Item -LiteralPath (Join-Path $projectRoot "data/dictionaries/$sourceName.tdict.zst") -Destination $dictionaryDestination
     }
     Write-Host "Ready: $(Join-Path $destination 'tinydict.exe')"
 } finally {

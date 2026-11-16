@@ -13,7 +13,7 @@ pub(crate) fn run(directory: &Path, lookup: Option<&str>) -> anyhow::Result<()> 
         .collect::<anyhow::Result<Vec<_>>>()?;
     anyhow::ensure!(
         !dictionaries.is_empty(),
-        "no .tdict packages in {}",
+        "no .tdict or .tdict.zst packages in {}",
         directory.display()
     );
     println!(
