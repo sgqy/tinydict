@@ -13,7 +13,7 @@ impl ResourceBudget {
     pub fn detect(total: u64, available: u64, logical_cpus: usize) -> Self {
         const GIB: u64 = 1024 * 1024 * 1024;
         let ceiling = match total / GIB {
-            0..=4 => GIB / 4,
+            0..=4 => 3 * GIB / 4,
             5..=8 => GIB,
             9..=16 => 4 * GIB,
             17..=32 => 12 * GIB,

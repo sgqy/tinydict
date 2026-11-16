@@ -87,7 +87,7 @@ fn resource_admission_scales_and_respects_memory_pressure() {
     );
     assert_eq!(
         ResourceBudget::detect(4 * gib, 3 * gib, 8).resident_bytes,
-        gib / 4
+        3 * gib / 4
     );
     assert_eq!(
         ResourceBudget::detect(96 * gib, 10 * gib, 24).resident_bytes,
