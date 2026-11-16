@@ -83,3 +83,15 @@ fn malformed_source_and_corrupt_package_are_rejected() {
     assert!(inspect_package(&missing).is_err());
     assert!(!missing.exists());
 }
+
+#[test]
+fn wordset_entries_without_meanings_are_counted_and_skipped() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("words.json");
+    fs::write(&input, r#"{"empty":{"word":"empty","wordset_id":"empty"},"valid":{"word":"valid","wordset_id":"valid","meanings":[{"id":"s1","def":"A test definition."}]}}"#).unwrap();
+    let (dictionary, report) = import_source(Source::Wordset, &input, info("wordset"), 1).unwrap();
+    assert_eq!(report.input_entries, 2);
+    assert_eq!(report.skipped_entries, 1);
+    assert_eq!(dictionary.entry_count(), 1);
+    assert!(dictionary.exact("empty").is_none());
+}

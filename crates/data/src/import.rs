@@ -180,6 +180,7 @@ struct WordsetEntry {
     contributors: Vec<String>,
     #[serde(default)]
     editors: Vec<String>,
+    #[serde(default)]
     meanings: Vec<Meaning>,
 }
 
