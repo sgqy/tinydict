@@ -1,10 +1,20 @@
 # 窗口性能诊断
 
-## 结论与修改
+## 当前启动策略
+
+Intel UHD 630 + RDP 环境反馈 Vulkan 启动时发生 segfault。Windows 默认后端现为 Direct3D 12，macOS 为 Metal，其他系统为 Vulkan；失败后尝试 OpenGL。下文保留早期开发机的 Vulkan 性能结果，不能用这些结果推断 RDP 兼容性。
+
+父进程不初始化图形驱动。每个候选后端在独立子进程中创建实际窗口；子进程进入第 3 个独立 UI 帧时报告就绪。就绪之前异常退出，或 30 s 内未就绪，父进程会尝试下一个后端。超时的子进程先终止并回收，用户正常关闭窗口则不触发回退。
+
+`--renderer auto` 是默认值。`--renderer vulkan` 优先尝试 Vulkan，再尝试平台后端和 OpenGL，并去除重复后端。`--renderer glow` 优先尝试 OpenGL，失败后尝试平台后端。Windows 日志位于 `%APPDATA%\TinyDict\data\graphics-startup.log`。
+
+自动测试覆盖子进程失败、就绪和超时回收；开发机已记录 Direct3D 12 渲染就绪。真实 UHD 630 + RDP 环境仍待复测。检测只覆盖启动阶段，就绪后的驱动故障会记录退出状态，不自动切换后端或重启。
+
+## 早期长帧排查
 
 2026-11-17 排查“鼠标在窗口内移动就卡，包括空白首页”。已将瓶颈范围缩小到界面构建之后的渲染、呈现和事件循环等待。鼠标移动会触发 egui 重绘，不会重新查询词典。首页与查询页的界面构建均远低于一帧的时间预算。
 
-Windows 默认后端改为 wgpu / Vulkan，保留垂直同步和 1 帧的目标排队上限。正常模式仍按事件重绘。`--renderer glow` 可切回 OpenGL，`--renderer wgpu` 在 Windows 上选择 Direct3D 12。
+当时将 Windows 默认后端改为 wgpu / Vulkan，保留垂直同步和 1 帧的目标排队上限。正常模式仍按事件重绘。当前仍可通过 `--renderer vulkan` 复测该路径；`--renderer wgpu` 在 Windows 上选择 Direct3D 12。
 
 2026-11-17，使用者在新版窗口的空白区域实际移动鼠标，反馈“已经明显顺滑”。这确认了切换 Vulkan 对本机实际操作的改善。尚未用系统级跟踪区分 OpenGL 驱动内部、桌面合成器和线程调度，也未测量真实鼠标到屏幕的延迟，因此不将原因归结为某个具体驱动缺陷。
 
