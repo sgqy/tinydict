@@ -159,22 +159,50 @@ fn is_zstd(path: &Path) -> Result<bool, PackageError> {
 /// # Errors
 /// Fails for unreadable packages, invalid entries or mismatched metadata counts.
 pub fn load_package(path: &Path) -> Result<Dictionary, PackageError> {
+    let mut entries = Vec::new();
+    let metadata = visit_entries(path, |entry| {
+        entries.push(entry);
+        Ok(())
+    })?;
+    build_dictionary(metadata, entries)
+}
+
+pub(crate) fn visit_entries(
+    path: &Path,
+    mut visit: impl FnMut(Entry) -> Result<(), PackageError>,
+) -> Result<PackageManifest, PackageError> {
     if is_zstd(path)? {
-        return compressed::load(path);
+        return compressed::visit(path, visit);
     }
     let connection = open_readonly(path)?;
     let metadata = manifest(&connection)?;
     let mut statement = connection.prepare("SELECT json FROM entries ORDER BY id")?;
     let mut rows = statement.query([])?;
-    let mut entries = Vec::new();
+    let mut counts = (0, 0);
     while let Some(row) = rows.next()? {
         let json = row
             .get_ref(0)?
             .as_str()
             .map_err(|error| PackageError::Invalid(error.to_string()))?;
-        entries.push(serde_json::from_str::<Entry>(json)?);
+        let entry: Entry = serde_json::from_str(json)?;
+        counts.0 += 1;
+        counts.1 += entry.senses.len();
+        visit(entry)?;
     }
-    build_dictionary(metadata, entries)
+    check_counts(&metadata, counts)?;
+    Ok(metadata)
+}
+
+pub(crate) fn check_counts(
+    metadata: &PackageManifest,
+    counts: (usize, usize),
+) -> Result<(), PackageError> {
+    if counts != (metadata.entry_count, metadata.sense_count) {
+        return Err(PackageError::Invalid(
+            "entry or sense count does not match manifest".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn build_dictionary(

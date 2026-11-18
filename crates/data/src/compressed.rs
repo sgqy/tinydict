@@ -1,4 +1,4 @@
-use crate::package::{build_dictionary, make_manifest};
+use crate::package::{check_counts, make_manifest};
 use crate::{ImportReport, PackageError, PackageManifest};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -85,20 +85,26 @@ pub(crate) fn inspect(path: &Path) -> Result<PackageManifest, PackageError> {
     manifest(&mut reader(path)?, &mut String::new())
 }
 
-pub(crate) fn load(path: &Path) -> Result<Dictionary, PackageError> {
+pub(crate) fn visit(
+    path: &Path,
+    mut visit: impl FnMut(Entry) -> Result<(), PackageError>,
+) -> Result<PackageManifest, PackageError> {
     let mut input = reader(path)?;
     let mut line = String::new();
     let metadata = manifest(&mut input, &mut line)?;
-    // Grow from actual records, never preallocate from an untrusted header count.
-    let mut entries = Vec::new();
+    let mut counts = (0, 0);
     while read_record(&mut input, &mut line)? != 0 {
-        if entries.len() >= metadata.entry_count {
+        if counts.0 >= metadata.entry_count {
             return Err(PackageError::Invalid(
                 "more entries than manifest declares".into(),
             ));
         }
-        entries.push(serde_json::from_str::<Entry>(&line)?);
+        let entry: Entry = serde_json::from_str(&line)?;
+        counts.0 += 1;
+        counts.1 += entry.senses.len();
+        visit(entry)?;
     }
     // Reading through EOF also verifies the zstd frame checksum and detects truncation.
-    build_dictionary(metadata, entries)
+    check_counts(&metadata, counts)?;
+    Ok(metadata)
 }

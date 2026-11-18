@@ -19,6 +19,7 @@ serde_json.workspace = true
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 tinydict-core.workspace = true
 tinydict-data.workspace = true
+tempfile = "3"
 
 [lints]
 workspace = true
