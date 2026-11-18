@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod app;
+mod graphics;
 mod paths;
 mod profile;
 mod worker;
@@ -8,34 +9,20 @@ mod worker;
 use clap::Parser;
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum Renderer {
-    Glow,
-    Wgpu,
-    Vulkan,
-}
-
-impl Default for Renderer {
-    fn default() -> Self {
-        // Vulkan avoided the intermittent OpenGL stalls in the Windows frame profiles.
-        // Keep the other backends selectable for hardware-specific comparisons.
-        if cfg!(target_os = "windows") {
-            Self::Vulkan
-        } else {
-            Self::Wgpu
-        }
-    }
-}
+use graphics::Renderer;
 
 #[derive(Parser)]
 #[command(
-    about = "Offline English dictionaries, independently indexed and fully loaded into memory"
+    about = "Offline English dictionaries with independent indexes and optional disk-backed text"
 )]
 struct Args {
     #[arg(long)]
     data_dir: Option<PathBuf>,
     #[arg(long, default_value = "")]
     query: String,
+    /// Keep all headword indexes in memory; fetch definition text from compressed disk blocks.
+    #[arg(long)]
+    low_memory: bool,
     /// Record a bounded continuous-repaint diagnostic run as JSON, then exit.
     #[arg(long)]
     profile: Option<PathBuf>,
@@ -47,13 +34,20 @@ struct Args {
     /// Disable presentation synchronization for a diagnostic comparison.
     #[arg(long)]
     no_vsync: bool,
-    /// Select a renderer; Windows defaults to Vulkan, other platforms to wgpu.
+    /// Select a renderer; auto tries the platform backend, then OpenGL.
     #[arg(long, value_enum, default_value_t = Renderer::default())]
     renderer: Renderer,
+    #[arg(long, hide = true, value_enum)]
+    graphics_backend: Option<Renderer>,
+    #[arg(long, hide = true, requires = "graphics_backend")]
+    graphics_ready_file: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let Some(renderer) = args.graphics_backend else {
+        return graphics::launch(args.renderer);
+    };
     let directory = args.data_dir.unwrap_or_else(paths::default_directory);
     // Keep diagnostic window/layout state separate from the user's normal session.
     let profile_storage = args
@@ -73,27 +67,26 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     options.glow_options.vsync = !args.no_vsync;
-    options.renderer = match args.renderer {
-        Renderer::Glow => eframe::Renderer::Glow,
-        Renderer::Wgpu | Renderer::Vulkan => eframe::Renderer::Wgpu,
-    };
+    graphics::configure(renderer, &mut options);
     options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
     if args.no_vsync {
         options.wgpu_options.surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
-    }
-    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
-        if matches!(args.renderer, Renderer::Vulkan) {
-            setup.instance_descriptor.backends = eframe::wgpu::Backends::VULKAN;
-        } else if cfg!(target_os = "windows") {
-            setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
-        }
     }
     eframe::run_native(
         "TinyDict",
         options,
         Box::new(move |creation| {
             Ok(Box::new(app::TinyDict::new(
-                creation, directory, args.query, probe,
+                creation,
+                directory,
+                args.query,
+                if args.low_memory {
+                    tinydict_data::LoadMode::LowMemory
+                } else {
+                    tinydict_data::LoadMode::Full
+                },
+                probe,
+                args.graphics_ready_file.map(graphics::StartupSignal::new),
             )))
         }),
     )

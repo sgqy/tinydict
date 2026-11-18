@@ -3,16 +3,21 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
-use tinydict_core::{Dictionary, ResourceBudget};
+use tinydict_core::{Entry, ResourceBudget};
+use tinydict_data::{LoadMode, LoadedDictionary};
 
 pub(crate) enum LoadEvent {
     Started(String),
-    Ready(Arc<Dictionary>, Duration),
+    Ready(Arc<LoadedDictionary>, Duration),
     Failed(String),
     Finished,
 }
 
-pub(crate) fn start_loader(directory: PathBuf, ctx: egui::Context) -> mpsc::Receiver<LoadEvent> {
+pub(crate) fn start_loader(
+    directory: PathBuf,
+    ctx: egui::Context,
+    mode: LoadMode,
+) -> mpsc::Receiver<LoadEvent> {
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let send = |event| {
@@ -47,7 +52,7 @@ pub(crate) fn start_loader(directory: PathBuf, ctx: egui::Context) -> mpsc::Rece
                 return;
             }
             let start = Instant::now();
-            let result = (|| -> anyhow::Result<Dictionary> {
+            let result = (|| -> anyhow::Result<LoadedDictionary> {
                 let metadata = tinydict_data::inspect_package(&path)?;
                 anyhow::ensure!(
                     !ids.contains(&metadata.dictionary.id),
@@ -55,14 +60,28 @@ pub(crate) fn start_loader(directory: PathBuf, ctx: egui::Context) -> mpsc::Rece
                     metadata.dictionary.id
                 );
                 system.refresh_memory();
-                let working_space = metadata.estimated_bytes.saturating_mul(2);
+                let estimate = if mode == LoadMode::LowMemory {
+                    (metadata.entry_count as u64)
+                        .saturating_mul(96)
+                        .saturating_add(metadata.dictionary.license.len() as u64)
+                } else {
+                    metadata.estimated_bytes
+                };
+                let working_space = estimate.saturating_mul(2);
                 let reserve = (system.total_memory() / 6).max(1024_u64.pow(3));
                 anyhow::ensure!(
-                    resident.saturating_add(metadata.estimated_bytes) <= budget.resident_bytes
+                    resident.saturating_add(estimate) <= budget.resident_bytes
                         && working_space <= system.available_memory().saturating_sub(reserve),
-                    "insufficient memory for full loading; close other applications and restart"
+                    "insufficient memory for this mode; try --low-memory or close other applications"
                 );
-                Ok(tinydict_data::load_package(&path)?)
+                let dictionary =
+                    tinydict_data::load_for_query(&path, &directory.join(".tinydict-cache"), mode)?;
+                anyhow::ensure!(
+                    resident.saturating_add(dictionary.estimated_bytes() as u64)
+                        <= budget.resident_bytes,
+                    "resident index exceeds available memory budget"
+                );
+                Ok(dictionary)
             })();
             match result {
                 Ok(dictionary) => {
@@ -87,14 +106,24 @@ pub(crate) fn start_loader(directory: PathBuf, ctx: egui::Context) -> mpsc::Rece
 pub(crate) struct SearchRequest {
     pub generation: u64,
     pub query: String,
-    pub dictionaries: Vec<Arc<Dictionary>>,
+    pub dictionaries: Vec<Arc<LoadedDictionary>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct BookMatches {
-    pub dictionary: Arc<Dictionary>,
+    pub dictionary: Arc<LoadedDictionary>,
     pub exact: Option<usize>,
     pub suggestions: Vec<usize>,
+    disk_entries: Option<Vec<Entry>>,
+    pub error: Option<String>,
+}
+
+impl BookMatches {
+    pub fn entries(&self) -> Option<&[Entry]> {
+        self.disk_entries
+            .as_deref()
+            .or_else(|| self.dictionary.resident_entries(self.exact?))
+    }
 }
 
 #[derive(Debug)]
@@ -149,10 +178,21 @@ impl SearchWorker {
                     }
                     let exact = dictionary.exact(&request.query);
                     let suggestions = dictionary.prefix(&request.query, 50);
+                    let (disk_entries, error) =
+                        if let Some(id) = exact.filter(|_| dictionary.is_disk_backed()) {
+                            match dictionary.entries(id) {
+                                Ok(entries) => (Some(entries.into_owned()), None),
+                                Err(error) => (None, Some(error.to_string())),
+                            }
+                        } else {
+                            (None, None)
+                        };
                     books.push(BookMatches {
                         dictionary,
                         exact,
                         suggestions,
+                        disk_entries,
+                        error,
                     });
                 }
                 if worker_latest.load(Ordering::Relaxed) == request.generation {
@@ -197,9 +237,9 @@ impl Drop for SearchWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tinydict_core::{DictionaryInfo, Entry, Sense};
+    use tinydict_core::{Dictionary, DictionaryInfo, Entry, Sense};
 
-    fn book(id: &str, definition: &str) -> Arc<Dictionary> {
+    fn book(id: &str, definition: &str) -> Arc<LoadedDictionary> {
         Arc::new(
             Dictionary::build(
                 DictionaryInfo {
@@ -220,7 +260,8 @@ mod tests {
                     }],
                 }],
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         )
     }
 
@@ -255,7 +296,7 @@ mod tests {
         assert!(Arc::ptr_eq(&result.books[1].dictionary, &b));
         assert_eq!(result.books[0].exact, Some(0));
         assert_eq!(
-            result.books[1].dictionary.groups()[0].entries[0].senses[0].definition,
+            result.books[1].entries().unwrap()[0].senses[0].definition,
             "second source"
         );
         worker.submit(SearchRequest {
@@ -279,6 +320,7 @@ mod tests {
         let receiver = start_loader(
             PathBuf::from("a-directory-that-does-not-exist-for-tinydict-tests"),
             egui::Context::default(),
+            LoadMode::Full,
         );
         assert!(matches!(
             receiver.recv_timeout(Duration::from_secs(5)).unwrap(),

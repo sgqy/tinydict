@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
-use tinydict_core::Dictionary;
+use tinydict_data::{LoadMode, LoadedDictionary};
 
 fn accent(visuals: &egui::Visuals) -> Color32 {
     if visuals.dark_mode {
@@ -25,7 +25,7 @@ struct Preferences {
 }
 
 struct LoadedBook {
-    dictionary: Arc<Dictionary>,
+    dictionary: Arc<LoadedDictionary>,
     enabled: bool,
 }
 struct Suggestion {
@@ -35,6 +35,7 @@ struct Suggestion {
 
 pub(crate) struct TinyDict {
     directory: PathBuf,
+    mode: LoadMode,
     preferences: Preferences,
     books: Vec<LoadedBook>,
     loader: mpsc::Receiver<LoadEvent>,
@@ -53,6 +54,7 @@ pub(crate) struct TinyDict {
     show_licenses: bool,
     load_seconds: f64,
     probe: Option<crate::profile::FrameProbe>,
+    startup: Option<crate::graphics::StartupSignal>,
 }
 
 impl TinyDict {
@@ -60,7 +62,9 @@ impl TinyDict {
         creation: &eframe::CreationContext<'_>,
         directory: PathBuf,
         query: String,
+        mode: LoadMode,
         probe: Option<crate::profile::FrameProbe>,
+        startup: Option<crate::graphics::StartupSignal>,
     ) -> Self {
         let preferences: Preferences = creation
             .storage
@@ -83,9 +87,10 @@ impl TinyDict {
                 .insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
         });
         Self {
-            loader: start_loader(directory.clone(), ctx.clone()),
+            loader: start_loader(directory.clone(), ctx.clone(), mode),
             worker: SearchWorker::new(ctx.clone()),
             directory,
+            mode,
             preferences,
             books: Vec::new(),
             loading: Some("Discovering dictionaries".into()),
@@ -102,6 +107,7 @@ impl TinyDict {
             show_licenses: false,
             load_seconds: 0.0,
             probe,
+            startup,
         }
     }
 
@@ -155,7 +161,7 @@ impl TinyDict {
                 .flat_map(|book| {
                     book.suggestions.iter().map(|&id| Suggestion {
                         book: book.dictionary.info().name.clone(),
-                        word: book.dictionary.groups()[id].entries[0].word.clone(),
+                        word: book.dictionary.headword(id).unwrap_or_default().to_owned(),
                     })
                 })
                 .collect();
@@ -275,9 +281,13 @@ impl TinyDict {
                     ui.label(format!("Loading {name}"));
                 } else {
                     ui.label(
-                        RichText::new("LOCAL / IN MEMORY")
-                            .color(accent(ui.visuals()))
-                            .size(12.0),
+                        RichText::new(if self.mode == LoadMode::LowMemory {
+                            "LOCAL / INDEX IN MEMORY"
+                        } else {
+                            "LOCAL / IN MEMORY"
+                        })
+                        .color(accent(ui.visuals()))
+                        .size(12.0),
                     );
                 }
                 ui.separator();
@@ -322,7 +332,7 @@ impl TinyDict {
                     }
                     ui.small(format!(
                         "{} headwords · {} senses",
-                        book.dictionary.groups().len(),
+                        book.dictionary.headword_count(),
                         book.dictionary.sense_count()
                     ));
                 }
@@ -455,6 +465,9 @@ impl eframe::App for TinyDict {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let started = self.probe.as_ref().map(|_| std::time::Instant::now());
         self.content(ui);
+        if let Some(startup) = &mut self.startup {
+            startup.frame(ui.ctx());
+        }
         if let (Some(probe), Some(started)) = (&mut self.probe, started) {
             probe.record_ui(started.elapsed());
         }
@@ -493,13 +506,11 @@ fn render_book(
                         .strong()
                         .color(accent(ui.visuals())),
                 );
-                if let Some(id) = book.exact {
-                    let group = &book.dictionary.groups()[id];
-                    let total: usize = group.entries.iter().map(|entry| entry.senses.len()).sum();
+                if let Some(entries) = book.entries() {
+                    let total: usize = entries.iter().map(|entry| entry.senses.len()).sum();
                     ui.small(format!("{total} senses"));
                     if ui.small_button("Copy").clicked() {
-                        let text = group
-                            .entries
+                        let text = entries
                             .iter()
                             .flat_map(|entry| {
                                 entry.senses.iter().map(|sense| {
@@ -519,20 +530,21 @@ fn render_book(
                 }
             });
             ui.separator();
-            let Some(id) = book.exact else {
+            if let Some(error) = &book.error {
+                ui.colored_label(ui.visuals().error_fg_color, error);
+                return;
+            }
+            let Some(group_entries) = book.entries() else {
                 ui.label("No exact match in this dictionary. Select a suggestion on the left.");
                 return;
             };
-            let group = &book.dictionary.groups()[id];
-            let total: usize = group.entries.iter().map(|entry| entry.senses.len()).sum();
+            let total: usize = group_entries.iter().map(|entry| entry.senses.len()).sum();
             // Exact spelling first, retaining source order inside each spelling class.
-            let entries = group
-                .entries
+            let entries = group_entries
                 .iter()
                 .filter(|entry| entry.word == query.trim())
                 .chain(
-                    group
-                        .entries
+                    group_entries
                         .iter()
                         .filter(|entry| entry.word != query.trim()),
                 );
