@@ -6,7 +6,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use tinydict_core::Dictionary;
 
-const ACCENT: Color32 = Color32::from_rgb(83, 202, 184);
+fn accent(visuals: &egui::Visuals) -> Color32 {
+    if visuals.dark_mode {
+        Color32::from_rgb(83, 202, 184)
+    } else {
+        Color32::from_rgb(0, 105, 93)
+    }
+}
 const SENSE_PAGE: usize = 24;
 
 #[derive(Default, Deserialize, Serialize)]
@@ -173,11 +179,15 @@ impl TinyDict {
         let mut changed = false;
         let mut choose = None;
         egui::Panel::top("search")
-            .frame(egui::Frame::default().inner_margin(20))
+            .frame(egui::Frame::central_panel(ui.style()).inner_margin(20))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("TinyDict").size(27.0).strong());
-                    ui.label(RichText::new("ENGLISH / OFFLINE").size(12.0).color(ACCENT));
+                    ui.label(
+                        RichText::new("ENGLISH / OFFLINE")
+                            .size(12.0)
+                            .color(accent(ui.visuals())),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Sources & licenses").clicked() {
                             self.show_licenses = true;
@@ -264,7 +274,11 @@ impl TinyDict {
                     ui.spinner();
                     ui.label(format!("Loading {name}"));
                 } else {
-                    ui.label(RichText::new("LOCAL / IN MEMORY").color(ACCENT).size(12.0));
+                    ui.label(
+                        RichText::new("LOCAL / IN MEMORY")
+                            .color(accent(ui.visuals()))
+                            .size(12.0),
+                    );
                 }
                 ui.separator();
                 let memory = self
@@ -292,9 +306,13 @@ impl TinyDict {
             .default_size(280.0)
             .min_size(220.0)
             .resizable(true)
-            .frame(egui::Frame::default().inner_margin(16))
+            .frame(egui::Frame::central_panel(ui.style()).inner_margin(16))
             .show(ui, |ui| {
-                ui.label(RichText::new("DICTIONARIES").size(12.0).color(ACCENT));
+                ui.label(
+                    RichText::new("DICTIONARIES")
+                        .size(12.0)
+                        .color(accent(ui.visuals())),
+                );
                 for book in &mut self.books {
                     if ui
                         .checkbox(&mut book.enabled, &book.dictionary.info().name)
@@ -318,7 +336,9 @@ impl TinyDict {
                                 ("SAVED WORDS", &self.preferences.favorites),
                                 ("RECENT LOOKUPS", &self.preferences.history),
                             ] {
-                                ui.label(RichText::new(title).size(12.0).color(ACCENT));
+                                ui.label(
+                                    RichText::new(title).size(12.0).color(accent(ui.visuals())),
+                                );
                                 for word in words {
                                     if ui.selectable_label(false, word).clicked() {
                                         choose = Some(word.clone());
@@ -360,7 +380,7 @@ impl TinyDict {
                     self.scroll_selection = false;
                 }
             });
-        egui::CentralPanel::default().frame(egui::Frame::default().inner_margin(24)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::central_panel(ui.style()).inner_margin(24)).show(ui, |ui| {
             egui::ScrollArea::vertical().id_salt(("definitions", self.generation)).show(ui, |ui| {
                 for error in &self.errors { ui.colored_label(Color32::from_rgb(240, 140, 120), error); }
                 if self.books.is_empty() && self.loading.is_none() {
@@ -418,6 +438,10 @@ impl TinyDict {
 }
 
 impl eframe::App for TinyDict {
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        egui::Rgba::from(visuals.panel_fill).to_array()
+    }
+
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.receive();
         if let Some(probe) = &mut self.probe {
@@ -467,7 +491,7 @@ fn render_book(
                     RichText::new(&book.dictionary.info().name)
                         .size(19.0)
                         .strong()
-                        .color(ACCENT),
+                        .color(accent(ui.visuals())),
                 );
                 if let Some(id) = book.exact {
                     let group = &book.dictionary.groups()[id];
@@ -541,7 +565,7 @@ fn render_book(
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new(format!("{shown}. {}", entry.word)).strong());
                         if let Some(pos) = &sense.part_of_speech {
-                            ui.label(RichText::new(pos).italics().color(ACCENT));
+                            ui.label(RichText::new(pos).italics().color(accent(ui.visuals())));
                         }
                         if let Some(original) = &sense.original_wordtype {
                             ui.small(original);
